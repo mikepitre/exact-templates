@@ -42,17 +42,25 @@ test('competing orders cannot both consume the last units', async () => {
   expect(await stock(slug, 'S')).toBe(0);
 });
 
+// A member's own code, as server.ts makes it for an account.
+const memberCode = (email: string) => {
+  let h = 2166136261;
+  for (const c of email) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  return `FRIEND${h % 9000 + 1000}`;
+};
+
 test('issued member codes discount the server-priced order', async () => {
-  const account = await request('/signin', { email: 'review@example.com' });
   const p = CATALOG[0]!;
-  const placed = await request('/orders', checkout([`${p.slug}|${p.colors[0]!.name}|M|1`], account.body.code));
+  // The first order makes the account, and with it the member's code.
+  expect((await request('/orders', checkout([`${p.slug}|${p.colors[0]!.name}|M|1`]))).status).toBe(201);
+  const placed = await request('/orders', checkout([`${p.slug}|${p.colors[0]!.name}|M|1`], memberCode('review@example.com')));
   expect(placed.status).toBe(201);
   const order = await request(`/orders/${placed.body.id}`);
   expect(order.body.discountCents).toBe(Math.round(p.priceCents / 10));
 });
 
 test('write endpoints reject null, arrays, scalars and malformed JSON with JSON errors', async () => {
-  for (const [method, path] of [['POST', '/subscribe'], ['POST', '/signin'], ['PATCH', '/account'], ['POST', '/orders'], ['POST', '/notify'], ['POST', '/stock/check']]) {
+  for (const [method, path] of [['POST', '/subscribe'], ['POST', '/orders'], ['POST', '/notify'], ['POST', '/stock/check']]) {
     for (const body of ['null', '[]', '"text"', 'true', '42', '{']) {
       const response = await fetch(api.origin + path, { method, headers: { 'content-type': 'application/json' }, body });
       expect(response.status, `${method} ${path}: ${body}`).toBe(400);

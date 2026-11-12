@@ -27,3 +27,7 @@ landscapes/app/assets/apple/
 # Softwear's local API database and per-machine API address
 softwear/app/data.db*
 softwear/app/.env.local
+
+# clerk-ios, which softwear/app/scripts/clerk-ios.sh builds
+softwear/app/modules/apple/Clerk.xcframework/
+softwear/app/assets/clerk/

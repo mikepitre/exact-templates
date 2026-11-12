@@ -10,13 +10,6 @@
 import UIKit
 import ImageIO
 
-final class Softwear: ExactModule {
-    override class var views: [String: ExactNativeFactory] {
-        ["zoom-image": ExactNativeFactory(for: Softwear.self) { _, props, events in try ZoomImage(props: props, events: events) }]
-    }
-}
-let exactModule: ExactModule.Type = Softwear.self
-
 /// The photo at a path under `assets/`: the development asset root, then the bundle.
 private func loadAsset(_ relative: String) -> UIImage? {
     guard !relative.isEmpty, !relative.split(separator: "/").contains("..") else { return nil }
@@ -129,13 +122,6 @@ final class ZoomImage: ExactNativeInstance {
 }
 #else
 import AppKit
-
-final class Softwear: ExactModule {
-    override class var views: [String: ExactNativeFactory] {
-        ["zoom-image": ExactNativeFactory(for: Softwear.self) { _, props, events in try ZoomImage(props: props, events: events) }]
-    }
-}
-let exactModule: ExactModule.Type = Softwear.self
 
 private final class ZoomView: NSScrollView {
     let photo = NSImageView()

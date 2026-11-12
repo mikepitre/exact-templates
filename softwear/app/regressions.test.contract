@@ -10,69 +10,6 @@ test "repeated additions stop at ten and persist the bounded quantity" on web
   clock data
   expect state bagCount == 10
 
-test "joining while signed in refreshes membership without reloading" on web
-  at "/account"
-  clock data
-  type "signin-email" "regression-subscriber@example.com"
-  tap "signin"
-  clock data
-  type "account-join-email" "regression-subscriber@example.com"
-  tap "account-join"
-  clock data
-  expect state joinOk == true
-  expect text "account-list" == "You're on it"
-
-test "an existing member sees a newly placed order immediately" on web
-  at "/account"
-  clock data
-  type "signin-email" "regression-order@example.com"
-  tap "signin"
-  clock data
-  tap "nav-shop"
-  clock settle
-  tap "card-go-to-tee"
-  clock data
-  clock settle
-  tap "size-XS"
-  tap "add-to-bag"
-  tap "nav-bag"
-  clock settle
-  clock data
-  tap "checkout"
-  clock settle
-  type "co-name" "Review"
-  type "co-address" "1 Test St"
-  type "co-city" "Test"
-  type "co-zip" "00000"
-  tap "place-order"
-  clock data
-  clock settle
-  expect state bag == []
-  tap "order-account"
-  clock settle
-  clock data
-  expect state orders.length == 1
-
-test "a saved name can be cleared, saved empty and loaded again" on web
-  at "/account"
-  clock data
-  type "signin-email" "regression-name@example.com"
-  tap "signin"
-  clock data
-  type "name" "Original"
-  tap "save-name"
-  clock data
-  reload
-  clock data
-  expect text "name" == "Original"
-  type "name" ""
-  expect text "name" == ""
-  tap "save-name"
-  clock data
-  reload
-  clock data
-  expect text "name" == ""
-
 test "a failed stock request does not use the previous product's sizes" on web
   at "/p/challenger-eco-fleece-hoodie"
   clock data

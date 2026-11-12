@@ -34,8 +34,8 @@ not affiliated with it.
 - Checkout with an address (kept on the device for the next order) and a shipping choice; the server
   checks stock, prices the order and gives it a number; the order has its own page. A refusal names
   the line and offers the bag.
-- Join the list for a welcome code; sign in with an email alone (no password: a demo) for orders, a
-  name and a member code. Saved styles and the appearance setting are the device's, signed in or not.
+- Join the list for a welcome code; sign in with Clerk (the iOS and Mac apps) for orders, a name and a member
+  code. Saved styles and the appearance setting are the device's, signed in or not.
 - In the installed app: the platform's bars, a tab bar (Shop, Search, Bag, Account) with each tab's
   own stack, and a haptic on add and save. In a browser: the site's header, nav and
   footer.
@@ -91,3 +91,32 @@ names, stock isolation, stock consumption and order retries. The API tests never
 | `assets/brand/` | The mark: the app icon and the SVG the site draws, written by `tools/logo.ts` |
 | `modules/` | `zoom-image`, the photo viewer: Swift for iOS, Kotlin for Android, JavaScript for the web |
 | `app.test.contract` | The tests (`test web`, `test ios`, `test android`) |
+
+## Sign-in with Clerk
+
+The iOS and Mac apps sign in with [clerk-ios](https://github.com/clerk/clerk-ios)'s own views. clerk-ios's
+`UserButton` sits in the shop and account screens' navigation bar on iOS and in the window's toolbar on the Mac:
+Sign in, which opens `AuthView`, until you sign in, then your photo, which opens your profile (sessions,
+sign-out). Clerk keeps the session; the app asks it who is signed in and for a session token, and the store's
+API reads who you are from that token.
+
+| File | What it does |
+| --- | --- |
+| `modules/apple/Clerk.swift` | Configures Clerk, puts `UserButton` in the navigation bar or toolbar, answers the email and a token |
+| `modules/apple/Softwear.swift` | The app's native module: the photo zoom view and Clerk's `user` and `token` |
+| `app.ts` | `clerkUser` (who is signed in) and a session token on each account and orders request |
+| `server.ts` | Checks the token against the instance's public keys and reads the email from it |
+| `scripts/clerk-ios.sh` | Prebuilds clerk-ios into `modules/apple/Clerk.xcframework` and `assets/clerk` |
+
+To run it with your own Clerk instance:
+
+1. In the [Clerk Dashboard](https://dashboard.clerk.com), turn on the Native API (Native applications) and
+   add a custom session claim, so the store's API learns your email from the token (Sessions, Customize
+   session token): `{"email": "{{user.primary_email_address}}"}`.
+2. Put the instance's publishable key in `.env` (`CLERK_PUBLISHABLE_KEY`) and in `modules/apple/Clerk.swift`.
+3. `bun exact.mjs clerk` builds clerk-ios once. Exact has no Swift packages yet, so the script builds it into
+   a static library that Exact links, and its resource bundles into `assets/clerk`.
+4. `bun add jose`, which `server.ts` checks the tokens with, then `bun server.ts`, and `bun exact.mjs ios --run`
+   or `bun exact.mjs mac --run`.
+
+The website and the Android app have no Clerk here, and are always signed out.

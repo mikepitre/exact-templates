@@ -19,12 +19,17 @@ type Notified = Result<'notifyMe'>;
 const NO_ACCOUNT: Account = { ok: false, error: '', email: '', name: '', code: '', memberSince: '', subscribed: false };
 const NO_ORDER: Order = { found: false, id: '', email: '', name: '', placedAt: '', status: '', shipping: '', subtotalCents: 0, discountCents: 0, shippingCents: 0, totalCents: 0, lines: [] };
 
+type ClerkUser = Result<'clerkUser'>;
+
 type Answered = { ok: true; status: number; body: unknown } | { ok: false; status: number; error: string };
 // One call to the API: a reply with its JSON, or why it failed. At build there is no server (`bake`), which a
-// source lets through so the page renders without that answer and asks again at launch.
-async function call(path: string, init: RequestInit = {}): Promise<Answered> {
+// source lets through so the page renders without that answer and asks again at launch. A Clerk session token
+// says who is asking; the server reads the person from it.
+async function call(path: string, init: RequestInit = {}, token = ''): Promise<Answered> {
   try {
-    const res = await fetch(`${API}${path}`, { ...init, exactTimeout: 10000, headers: { 'content-type': 'application/json' } });
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (token) headers.authorization = `Bearer ${token}`;
+    const res = await fetch(`${API}${path}`, { ...init, exactTimeout: 10000, headers });
     const body = (await res.json().catch(() => ({}))) as { error?: unknown };
     if (res.ok) return { ok: true, status: res.status, body };
     return { ok: false, status: res.status, error: typeof body?.error === 'string' ? body.error : `The store answered ${res.status}.` };
@@ -34,6 +39,12 @@ async function call(path: string, init: RequestInit = {}): Promise<Answered> {
   }
 }
 const post = (path: string, body: unknown) => call(path, { method: 'POST', body: JSON.stringify(body) });
+
+// Clerk lives in the iOS and Mac apps' native module (modules/apple/Clerk.swift): who is signed in, and a fresh session
+// token for each request (clerk-ios refreshes it). Where there is no module (the website), no one is.
+type Native = Parameters<Answer>[4];
+const clerkToken = async (native: Native) =>
+  native?.available ? String(((await native.later({ op: 'token' })) as { token?: unknown }).token ?? '') : '';
 
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object';
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
@@ -107,23 +118,25 @@ const sources: Sources = {
     const body = r.body as { code?: unknown; returning?: unknown };
     return { ok: true, error: '', code: str(body.code), returning: body.returning === true };
   },
-  signIn: async ([email]): Promise<Account> => {
-    const r = await post('/signin', { email });
-    return r.ok ? toAccount(r.body) : { ...NO_ACCOUNT, error: r.error };
+  // Who is signed in with Clerk, asked again whenever that changes.
+  clerkUser: async (_args, _store, _storage, native): Promise<ClerkUser> => {
+    if (!native?.available) return { email: '' };
+    native.watch('user');
+    return native.call({ op: 'user' }) as ClerkUser;
   },
-  loadAccount: async ([email]): Promise<Account> => {
+  loadAccount: async ([email], _store, _storage, native): Promise<Account> => {
     if (!email) return NO_ACCOUNT;
-    const r = await call(`/account?email=${encodeURIComponent(email)}`);
+    const r = await call('/account', {}, await clerkToken(native));
     if (!r.ok) throw new Error(r.error);
     return toAccount(r.body);
   },
-  saveName: async ([email, name]): Promise<Account> => {
-    const r = await call('/account', { method: 'PATCH', body: JSON.stringify({ email, name }) });
+  saveName: async ([name], _store, _storage, native): Promise<Account> => {
+    const r = await call('/account', { method: 'PATCH', body: JSON.stringify({ name }) }, await clerkToken(native));
     return r.ok ? toAccount(r.body) : { ...NO_ACCOUNT, error: r.error };
   },
-  loadOrders: async ([email]): Promise<Order[]> => {
+  loadOrders: async ([email], _store, _storage, native): Promise<Order[]> => {
     if (!email) return [];
-    const r = await call(`/orders?email=${encodeURIComponent(email)}`);
+    const r = await call('/orders', {}, await clerkToken(native));
     if (!r.ok) throw new Error(r.error);
     return Array.isArray(r.body) ? r.body.map(toOrder).filter((o) => o.found) : [];
   },

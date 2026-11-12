@@ -2,6 +2,7 @@
 // themselves on an empty database, its path in DB. It holds what a static site cannot: live stock per size, who
 // joined the list, accounts and orders. No payment is taken and nothing ships: an order is a record with a number.
 import { Database } from 'bun:sqlite';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { API } from './app.ts';
 import { CATALOG } from './catalog.ts';
 
@@ -27,7 +28,7 @@ const CODES: Record<string, number> = { WELCOME15: 15, FLEECE10: 10 };
 const pctOf = (code: string) => code in CODES ? CODES[code]! : db.query('SELECT 1 FROM accounts WHERE code = ?').get(code) !== null ? 10 : 0;
 const FREE_SHIPPING_FROM = 7500, STANDARD = 600, EXPRESS = 1400;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'GET, POST, PATCH' };
+const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, authorization', 'access-control-allow-methods': 'GET, POST, PATCH' };
 const send = (body: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(body, { status, headers: { ...CORS, ...headers } });
 const preflight = () => new Response(null, { status: 204, headers: CORS });
 // JSON can be null, an array or a scalar even when parsing succeeds.
@@ -37,6 +38,23 @@ const readBody = async (req: Request): Promise<Record<string, unknown> | null> =
 };
 const email = (v: unknown) => (typeof v === 'string' && EMAIL.test(v.trim()) ? v.trim().toLowerCase() : '');
 const now = () => new Date().toISOString();
+
+// Who is asking: the person in a Clerk session token, checked against the instance's public keys. The instance is
+// the one CLERK_PUBLISHABLE_KEY (.env) names: `pk_test_` and its Frontend API's host, base64. The token's email is
+// a custom session claim (Clerk Dashboard, Sessions: {"email": "{{user.primary_email_address}}"}).
+const frontendApi = `https://${atob(process.env.CLERK_PUBLISHABLE_KEY!.split('_')[2]!).replace(/\$$/, '')}`;
+const clerkKeys = createRemoteJWKSet(new URL(`${frontendApi}/.well-known/jwks.json`));
+async function signedIn(req: Request): Promise<string> {
+  const token = req.headers.get('authorization')?.replace(/^Bearer /, '');
+  if (!token) return '';
+  try {
+    const { payload } = await jwtVerify(token, clerkKeys, { issuer: frontendApi });
+    return email(payload.email);
+  } catch {
+    return '';
+  }
+}
+const signedOut = () => send({ error: 'Sign in to see your account.' }, 401);
 
 type Line = { slug: string; name: string; color: string; size: string; qty: number; priceCents: number };
 type Order = { found: boolean; id: string; email: string; name: string; placedAt: string; status: string; shipping: string;
@@ -129,39 +147,32 @@ Bun.serve({ hostname, port: Number(port), routes: {
       return send({ ok: true, error: '', code: 'WELCOME15', returning: false }, 201);
     },
   },
-  '/signin': {
+  '/account': {
     OPTIONS: preflight,
-    // No password: this demo signs in with an address alone and makes the account on first sight.
-    POST: async (req) => {
-      const body = await readBody(req);
-      if (!body) return send({ error: 'Send a JSON object.' }, 400);
-      const addr = email(body.email);
-      if (!addr) return send({ ok: false, error: 'Enter an email address, like you@example.com.', email: '', name: '', code: '', memberSince: '', subscribed: false }, 400);
+    // The signed-in person's account, made on first sight.
+    GET: async (req) => {
+      const addr = await signedIn(req);
+      if (!addr) return signedOut();
       if (!account(addr)) db.query('INSERT INTO accounts (email, name, code, since) VALUES (?, ?, ?, ?)').run(addr, '', personalCode(addr), now());
       return send(account(addr));
     },
-  },
-  '/account': {
-    OPTIONS: preflight,
-    GET: (req) => {
-      const addr = email(new URL(req.url).searchParams.get('email'));
-      const found = addr ? account(addr) : null;
-      return found ? send(found) : send({ error: 'No such account.' }, 404);
-    },
     PATCH: async (req) => {
+      const addr = await signedIn(req);
+      if (!addr) return signedOut();
       const body = await readBody(req);
       if (!body) return send({ error: 'Send a JSON object.' }, 400);
-      const addr = email(body.email);
-      if (!addr || !account(addr)) return send({ error: 'No such account.' }, 404);
+      if (!account(addr)) return send({ error: 'No such account.' }, 404);
       db.query('UPDATE accounts SET name = ? WHERE email = ?').run(typeof body.name === 'string' ? body.name.trim().slice(0, 80) : '', addr);
       return send(account(addr));
     },
   },
   '/orders': {
     OPTIONS: preflight,
-    GET: (req) => {
-      const addr = email(new URL(req.url).searchParams.get('email'));
-      const rows = addr ? (db.query('SELECT id, body FROM orders WHERE email = ? ORDER BY at DESC').all(addr) as { id: string; body: string }[]) : [];
+    // The signed-in person's own orders.
+    GET: async (req) => {
+      const addr = await signedIn(req);
+      if (!addr) return signedOut();
+      const rows = db.query('SELECT id, body FROM orders WHERE email = ? ORDER BY at DESC').all(addr) as { id: string; body: string }[];
       return send(rows.map(orderRow));
     },
     POST: async (req) => {

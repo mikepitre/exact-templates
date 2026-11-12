@@ -41,5 +41,14 @@
   },
   "env": [
     "API_BASE_URL"
-  ]
+  ],
+  "data": [
+    "clerk"
+  ],
+  "commands": {
+    "clerk": [
+      "sh",
+      "scripts/clerk-ios.sh"
+    ]
+  }
 }

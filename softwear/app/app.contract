@@ -77,6 +77,9 @@ shape Account
   memberSince: string
   subscribed: bool
 
+shape ClerkUser
+  email: string
+
 shape Line
   slug: string
   name: string
@@ -237,7 +240,6 @@ fn shipLabel(m: string): string = m == "express" ? "Express, 2 days" : "Standard
 component App
   state bag: string[] = [] persist
   state saved: string[] = [] persist
-  state member = "" persist
   state promo = "" persist
   state scheme = "system" persist
   state pickedColor = ""
@@ -247,7 +249,6 @@ component App
   state notifyDraft = ""
   state joinDraft = ""
   state promoDraft = ""
-  state signinDraft = ""
   state nameDraft = ""
   state nameEdited = false
   // The address is kept on the device, so a second order needs no retyping.
@@ -259,8 +260,6 @@ component App
   state coShip = "standard" persist
   // The submitted quantities still present in the bag; later additions belong to the next order.
   state submittedBag: string[] = []
-  state submittedEmail = ""
-  state submittedMember = ""
   state submittedPromo = ""
   state toast = ""
   state toastN = 0
@@ -317,13 +316,15 @@ component App
   derive needle = query.trim().toLowerCase()
   derive results = catalog.filter(p => needle != "" and matches(p, needle))
 
+  // Who is signed in: Clerk's answer in the iOS and Mac apps (modules/apple/Clerk.swift), no one on the website.
+  resource clerkUser = clerkUser() as shape ClerkUser else empty()
+  derive member = clerkUser.email
   resource account = loadAccount(member) as shape Account else empty()
   resource orders = loadOrders(member) as shape Order[] else empty()
   derive orderId = match stack(nav).filter(e => e.name == "order").at(-1) { case some(e) => e.params.id, case none => "" }
   resource order = loadOrder(orderId) as shape Order else empty()
 
   mutation joined as shape Joined refreshes account
-  mutation signedIn as shape Account then afterSignIn
   mutation renamed as shape Account refreshes account
   mutation placed as shape Placed refreshes orders, account, stock, bagStock then afterOrder
   derive nameValue = nameEdited ? nameDraft : account.name
@@ -332,9 +333,6 @@ component App
   derive joinNote = match joined { case some(r) => r.ok ? (r.returning ? `You're already on the list, and ${r.code} still works.` : `You're in. ${r.code} takes 15% off your first order.`) : r.error, case none => "" }
   derive joinOk = match joined { case some(r) => r.ok, case none => false }
   derive joinCode = match joined { case some(r) => r.ok ? r.code : "", case none => "" }
-  derive signinError = match signedIn { case some(r) => r.error, case none => "" }
-  derive signedOk = match signedIn { case some(r) => r.ok, case none => false }
-  derive signedEmail = match signedIn { case some(r) => r.email, case none => "" }
   derive placeError = match placed { case some(r) => r.error, case none => "" }
   derive placedOk = match placed { case some(r) => r.ok, case none => false }
   derive placedId = match placed { case some(r) => r.id, case none => "" }
@@ -443,28 +441,12 @@ component App
     promo = ""
     promoDraft = ""
 
-  action editSignin(v: string)
-    signinDraft = v
-  action signIn
-    if signinDraft.trim() != "" and not pending(signedIn)
-      send signedIn = signIn(signinDraft.trim())
-  action afterSignIn
-    if signedOk
-      member = signedEmail
-      signinDraft = ""
-      nameEdited = false
-      renamed = none
-  action signOut
-    member = ""
-    nameDraft = ""
-    nameEdited = false
-    renamed = none
   action editName(v: string)
     nameDraft = v
     nameEdited = true
   action saveName
     if nameEdited and not pending(renamed)
-      send renamed = saveName(member, nameValue.trim())
+      send renamed = saveName(nameValue.trim())
   action retryOrder
     refresh order
 
@@ -490,15 +472,11 @@ component App
   action placeOrder
     if checkoutHint == "" and not pending(placed)
       let email = coEmail.trim().toLowerCase()
-      submittedEmail = email
-      submittedMember = member
       submittedPromo = promo
       submittedBag = bag
       send placed = placeOrder(email, coName.trim(), coAddress.trim(), coCity.trim(), coZip.trim(), coShip, bag, promo)
   action afterOrder
     if placedOk
-      if member == submittedMember
-        member = submittedEmail
       bag = afterPurchase(bag, submittedBag)
       if promo == submittedPromo
         promo = ""
@@ -531,7 +509,7 @@ component App
             for e in t.stack key=e.id
 
               if e.name == "shop"
-                column navigationKey=`${e.id}` navigationScroll=`doc-${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` data-clerk="account" navigationScroll=`doc-${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
                   // A browser keeps only the shown page's content: the page beneath leaves as the next arrives, and a photo named on both flies between them. The app keeps every screen of its stack.
                   if inApp or e.id == top(nav).id
                     header display=(inApp ? "flex" : "none") align-items="center" padding="8px 16px"
@@ -1205,7 +1183,7 @@ component App
                       RouteToast(message=toast, hide=hideToast, book=book)
 
               if e.name == "account"
-                column navigationKey=`${e.id}` navigationScroll=`doc-${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` data-clerk="account" navigationScroll=`doc-${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
                   // A browser keeps only the shown page's content: the page beneath leaves as the next arrives, and a photo named on both flies between them. The app keeps every screen of its stack.
                   if inApp or e.id == top(nav).id
                     header display=(inApp ? "flex" : "none") align-items="center" padding="8px 16px"
@@ -1218,13 +1196,7 @@ component App
                         if member == ""
                           column gap=12
                             text "Sign in" role="heading" aria-level=1 class=Title
-                            text "Your orders, your saved styles and your member code. No password: this demo store signs you in with an email alone." color="muted" line-height=1.5
-                            row gap=8 flex-wrap="wrap"
-                              input value=signinDraft input=editSignin submit=signIn type="email" placeholder="you@example.com" aria-label="Email" autocomplete="email" inputmode="email" class=Field flex="1 1 240px" min-width=0 testId="signin-email"
-                              button press=signIn disabled=(signinDraft.trim() == "" or pending(signedIn)) buttonStyle="filled" class=Capsule testId="signin"
-                                text "Continue"
-                            if signinError != "" and not pending(signedIn)
-                              text signinError font-size="0.8125rem" color="error" testId="signin-error"
+                            text "Your orders, your saved styles and your member code. Sign in at the top of the screen." color="muted" line-height=1.5
                         else
                           column gap=6
                             text "Signed in as" class=Eyebrow
@@ -1264,8 +1236,6 @@ component App
                                       text o.id font-weight=600
                                       text `${plural(sum(o.lines.map(l => l.qty)), "item", "items")} · ${o.status}` font-size="0.875rem" color="muted"
                                     text money(o.totalCents) font-variant-numeric="tabular-nums"
-                          button press=signOut buttonStyle="bordered" class=Capsule align-self="flex-start" testId="signout"
-                            text "Sign out"
                         // Saved styles and the appearance are the device's, so a guest has them too.
                         column gap=10
                           text "Saved styles" role="heading" aria-level=2 font-size="1.125rem" font-weight=700 testId="saved-title"
